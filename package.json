@@ -1,9 +1,13 @@
 {
   "name": "@discosea/kitchen",
-  "version": "1.0.2",
+  "version": "1.0.7",
   "description": "This package builds Solana Instructions to merge multiple SPL tokens into one.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    "import": "./dist/index.js",
+    "require": "./dist/index.cjs"
+  },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",

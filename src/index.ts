@@ -1,3 +1,7 @@
-import { createRecipe } from "./instructionBuilder";
+/**
+ * @file instructionBuilder.ts
+ * @author azuldevgames@gmail.com
+ * @description Entry point
+ */
 
-export { createRecipe };
+export { findCookPDA } from "./instructionBuilder.js";

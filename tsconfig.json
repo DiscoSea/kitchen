@@ -1,14 +1,21 @@
 {
   "compilerOptions": {
-    "outDir": "./dist", // Output compiled JavaScript files here
-    "rootDir": "./src", // Keep source files in src/
-    "target": "ES6", // Modern JavaScript output
-    "module": "CommonJS", // Compatibility with Node.js and NPM
-    "strict": true, // Enforce strict type checking
-    "esModuleInterop": true, // Allow default imports from CommonJS
-    "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true
+    "target": "ESNext",
+    "module": "NodeNext",
+    "lib": ["DOM", "ESNext"],
+    "strict": true,
+    "jsx": "react-jsx",
+    "declaration": true,
+    "outDir": "dist",
+    "esModuleInterop": true,
+    "moduleResolution": "NodeNext",
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "baseUrl": "./src",
+    "paths": {
+      "@/*": ["*"]
+    }
   },
-  "include": ["src/**/*"], // Include all TypeScript files in src/
-  "exclude": ["node_modules", "dist"] // Exclude these folders from compilation
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
 }
