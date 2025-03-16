@@ -2,19 +2,22 @@
   "name": "@discosea/kitchen",
   "version": "1.0.7",
   "description": "This package builds Solana Instructions to merge multiple SPL tokens into one.",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.js",
   "exports": {
-    "import": "./dist/index.js",
-    "require": "./dist/index.cjs"
+    "import": "./src/index.js",
+    "require": "./src/index.cjs"
   },
+  "module": "src/index.js",
+  "type": "module",
   "scripts": {
-    "build": "tsc",
-    "prepublishOnly": "npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "clean": "rm -rf dist",
+    "build": "echo 'No build step required for JavaScript-only package'",
+    "prepublishOnly": "npm run clean",
+    "test": "mocha tests --recursive",
+    "test:watch": "mocha tests --watch"
   },
   "files": [
-    "dist/",
+    "src/",
     "package.json",
     "README.md"
   ],
@@ -41,14 +44,13 @@
     "url": "https://github.com/sponsors/redazul"
   },
   "license": "ISC",
-  "type": "module",
   "dependencies": {
     "@solana/spl-token": "^0.3.0",
     "@solana/web3.js": "^1.98.0",
     "bn.js": "^5.2.1"
   },
   "devDependencies": {
-    "@types/bn.js": "^5.1.6",
-    "typescript": "^5.3.3"
+    "chai": "^5.2.0",
+    "mocha": "^11.1.0"
   }
 }
