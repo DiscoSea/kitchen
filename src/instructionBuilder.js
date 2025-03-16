@@ -72,6 +72,22 @@ function validateCookedData(cookedData) {
   return cookedData;
 }
 
+/**
+ * Creates a transaction instruction for the "createRecipe" process, constructing
+ * a PDA (Program Derived Address) and associated metadata for an on-chain recipe.
+ *
+ * @param {PublicKey} feePayerPubkey - The public key of the fee payer executing the transaction.
+ * @param {Object} cookedData - The cooked recipe data containing necessary fields for creation.
+ * @param {string} cookedData.pda - The derived PDA for the recipe.
+ * @param {Array<Object>} cookedData.seeds - An array of seeds required for PDA derivation.
+ * @param {string} cookedData.salt - A unique salt value to ensure uniqueness.
+ * @param {string} cookedData.metadataCid - The IPFS CID storing metadata.
+ * @param {string} cookedData.name - The name of the recipe.
+ * @param {string} cookedData.symbol - The symbol associated with the recipe.
+ *
+ * @returns {Promise<TransactionInstruction>} A promise resolving to a Solana `TransactionInstruction`
+ * that can be included in a transaction for execution on-chain.
+ */
 export async function createRecipe(feePayerPubkey, cookedData) {
   console.log("Calling createRecipe");
 
@@ -157,6 +173,14 @@ export async function createRecipe(feePayerPubkey, cookedData) {
   });
 }
 
+/**
+ * Finds the Cook PDA (Program Derived Address) based on concatenated data and a salt.
+ *
+ * @param {Buffer | Uint8Array} concatenatedData - The input data to derive the PDA.
+ * @param {string} salt - A unique salt used for PDA derivation.
+ * @returns {{ pda: PublicKey, bump: number, sha256Hash: Uint8Array }}
+ * An object containing the derived PDA, bump seed, and SHA-256 hash.
+ */
 export function findCookPDA(concatenatedData, salt) {
   // Convert salt to a fixed 32-byte Uint8Array with padding
   const saltBytes = new Uint8Array(32);

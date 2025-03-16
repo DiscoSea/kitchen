@@ -1,6 +1,6 @@
 {
   "name": "@discosea/kitchen",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "This package builds Solana Instructions to merge multiple SPL tokens into one.",
   "main": "src/index.js",
   "exports": {
@@ -12,7 +12,7 @@
   "scripts": {
     "clean": "rm -rf dist",
     "build": "echo 'No build step required for JavaScript-only package'",
-    "prepublishOnly": "npm run clean",
+    "prepublishOnly": "npm test",
     "test": "mocha tests --recursive",
     "test:watch": "mocha tests --watch"
   },
