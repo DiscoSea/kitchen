@@ -210,3 +210,105 @@ export function findCookPDA(concatenatedData, salt) {
 
   return { pda, bump, sha256Hash };
 }
+
+export async function cookRecipe(feePayerPubkey, cookedData, tokenAccounts) {
+  console.log("Calling cookRecipe");
+
+  // Validate and destructure fields directly
+  const { pda, seeds, salt, metadataCid, name, symbol } =
+    validateCookedData(cookedData);
+
+  //check to make sure there are twice as many tokenAccounts then seeds
+  if (tokenAccounts.length !== 2 * seeds.length) {
+    console.log(
+      "NotEnough TokenAccounts,To fix pass all PDA accounts and User TokenAccounts for each mint"
+    );
+    return null;
+  }
+
+  let instructionData = Buffer.alloc(1);
+  instructionData.writeUInt8(0x02, 0);
+
+  const pdaPubkey = new PublicKey(pda);
+  const metadataPda = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("metadata"),
+      METADATA_PROGRAM_ID.toBuffer(),
+      pdaPubkey.toBuffer(),
+    ],
+    METADATA_PROGRAM_ID
+  );
+
+  let accounts = [
+    { pubkey: feePayerPubkey, isSigner: true, isWritable: true }, // payer_account
+    { pubkey: FEE_ACCOUNT_PUBKEY, isSigner: false, isWritable: false }, // fee_account
+    { pubkey: pdaPubkey, isSigner: false, isWritable: true }, // pda_account
+    { pubkey: metadataPda[0], isSigner: false, isWritable: true }, // metadata_account
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false }, // token_program
+    { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false }, // rent_sysvar
+    { pubkey: METADATA_PROGRAM_ID, isSigner: false, isWritable: false }, // metadata_program
+  ];
+
+  for (const seed of seeds) {
+    if (seed.mint) {
+      accounts.push({
+        pubkey: new PublicKey(seed.mint),
+        isSigner: false,
+        isWritable: false,
+      });
+    }
+  }
+
+  // Handling amounts
+  const amounts = seeds.map((s) => BigInt(s.amount_u64));
+  const amountsLen = encodeU32(amounts.length);
+  const amountsData = Buffer.concat(amounts.map(encodeU64));
+
+  instructionData = Buffer.concat([instructionData, amountsLen, amountsData]);
+
+  // Handling salt
+  let saltBuffer = Buffer.alloc(32);
+  const saltBytes = Buffer.from(salt, "utf-8");
+  saltBytes.copy(saltBuffer, 0, 0, Math.min(saltBytes.length, 32));
+
+  instructionData = Buffer.concat([instructionData, saltBuffer]);
+
+  // Handling encoded strings
+  const nameData = encodeString(name);
+  const symbolData = encodeString(symbol);
+  const uriData = encodeString(uri);
+
+  instructionData = Buffer.concat([
+    instructionData,
+    nameData,
+    symbolData,
+    uriData,
+  ]);
+
+  console.log("Instruction Data Breakdown:");
+  console.log("  Instruction ID:", instructionData.slice(0, 1).toString("hex"));
+  console.log("  Amounts Length:", amountsLen.toString("hex"));
+  console.log("  Amounts Data:", amountsData.toString("hex"));
+  console.log("  Salt:", saltBuffer.toString("hex"));
+  console.log("  Name:", nameData.toString("hex"));
+  console.log("  Symbol:", symbolData.toString("hex"));
+  console.log("  URI:", uriData.toString("hex"));
+  console.log("Final instruction data (hex):", instructionData.toString("hex"));
+
+  for (const tokenAccount of tokenAccounts) {
+    if (tokenAccount.mint) {
+      accounts.push({
+        pubkey: new PublicKey(tokenAccount.mint),
+        isSigner: false,
+        isWritable: true,
+      });
+    }
+  }
+
+  return new TransactionInstruction({
+    keys: accounts,
+    programId: PROGRAM_ID,
+    data: instructionData,
+  });
+}
