@@ -1,5 +1,3 @@
-# @
-
 This package builds Solana Instructions to merge multiple spl-tokens to 1.
 
 ## Use Exmaple

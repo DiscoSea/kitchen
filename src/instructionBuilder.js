@@ -72,6 +72,32 @@ function validateCookedData(cookedData) {
   return cookedData;
 }
 
+function validateCookedDataForCooking(cookedData) {
+  if (!cookedData || typeof cookedData !== "object") {
+    throw new Error("Invalid cookedData: Input must be an object.");
+  }
+
+  const requiredFields = ["pda", "seeds", "seedSalt"];
+  for (const field of requiredFields) {
+    if (!cookedData[field]) {
+      throw new Error(`Invalid cookedData: Missing required field '${field}'.`);
+    }
+  }
+
+  if (!Array.isArray(cookedData.seeds)) {
+    throw new Error("Invalid cookedData: 'seeds' must be an array.");
+  }
+
+  if (!cookedData.seeds.every((s) => s.mint && s.amount_u64 !== undefined)) {
+    throw new Error(
+      "Invalid cookedData: Each seed must have 'mint' and 'amount_u64'."
+    );
+  }
+
+  // Return the destructured valid fields
+  return cookedData;
+}
+
 /**
  * Creates a transaction instruction for the "createRecipe" process, constructing
  * a PDA (Program Derived Address) and associated metadata for an on-chain recipe.
@@ -215,8 +241,7 @@ export async function cookRecipe(feePayerPubkey, cookedData, tokenAccounts) {
   console.log("Calling cookRecipe");
 
   // Validate and destructure fields directly
-  const { pda, seeds, salt, metadataCid, name, symbol } =
-    validateCookedData(cookedData);
+  const { pda, seeds, seedSalt } = validateCookedDataForCooking(cookedData);
 
   //check to make sure there are twice as many tokenAccounts then seeds
   if (tokenAccounts.length !== 2 * seeds.length) {
@@ -269,41 +294,17 @@ export async function cookRecipe(feePayerPubkey, cookedData, tokenAccounts) {
 
   // Handling salt
   let saltBuffer = Buffer.alloc(32);
-  const saltBytes = Buffer.from(salt, "utf-8");
+  const saltBytes = Buffer.from(seedSalt, "utf-8");
   saltBytes.copy(saltBuffer, 0, 0, Math.min(saltBytes.length, 32));
 
   instructionData = Buffer.concat([instructionData, saltBuffer]);
 
-  // Handling encoded strings
-  const nameData = encodeString(name);
-  const symbolData = encodeString(symbol);
-  const uriData = encodeString(uri);
-
-  instructionData = Buffer.concat([
-    instructionData,
-    nameData,
-    symbolData,
-    uriData,
-  ]);
-
-  console.log("Instruction Data Breakdown:");
-  console.log("  Instruction ID:", instructionData.slice(0, 1).toString("hex"));
-  console.log("  Amounts Length:", amountsLen.toString("hex"));
-  console.log("  Amounts Data:", amountsData.toString("hex"));
-  console.log("  Salt:", saltBuffer.toString("hex"));
-  console.log("  Name:", nameData.toString("hex"));
-  console.log("  Symbol:", symbolData.toString("hex"));
-  console.log("  URI:", uriData.toString("hex"));
-  console.log("Final instruction data (hex):", instructionData.toString("hex"));
-
   for (const tokenAccount of tokenAccounts) {
-    if (tokenAccount.mint) {
-      accounts.push({
-        pubkey: new PublicKey(tokenAccount.mint),
-        isSigner: false,
-        isWritable: true,
-      });
-    }
+    accounts.push({
+      pubkey: new PublicKey(tokenAccount),
+      isSigner: false,
+      isWritable: true,
+    });
   }
 
   return new TransactionInstruction({
