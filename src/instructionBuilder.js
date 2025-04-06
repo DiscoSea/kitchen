@@ -17,6 +17,7 @@ import {
   PROGRAM_ID,
   METADATA_PROGRAM_ID,
   FEE_ACCOUNT_PUBKEY,
+  CONFIG_ACCOUNT,
   IPFS_GATEWAY,
 } from "./constants.js";
 
@@ -98,6 +99,15 @@ function validateCookedDataForCooking(cookedData) {
   return cookedData;
 }
 
+//convert ui qty to u64
+function toBaseUnits(amountStr, decimals) {
+  const floatVal = parseFloat(amountStr);
+  if (isNaN(floatVal)) throw new Error("Invalid number in qty_requested");
+
+  const scaled = Math.floor(floatVal * 10 ** decimals); // avoid rounding issues
+  return BigInt(scaled);
+}
+
 /**
  * Creates a transaction instruction for the "createRecipe" process, constructing
  * a PDA (Program Derived Address) and associated metadata for an on-chain recipe.
@@ -137,7 +147,8 @@ export async function createRecipe(feePayerPubkey, cookedData) {
 
   let accounts = [
     { pubkey: feePayerPubkey, isSigner: true, isWritable: true }, // payer_account
-    { pubkey: FEE_ACCOUNT_PUBKEY, isSigner: false, isWritable: false }, // fee_account
+    { pubkey: FEE_ACCOUNT_PUBKEY, isSigner: false, isWritable: true }, // fee_account
+    { pubkey: CONFIG_ACCOUNT, isSigner: false, isWritable: false }, // config_account
     { pubkey: pdaPubkey, isSigner: false, isWritable: true }, // pda_account
     { pubkey: metadataPda[0], isSigner: false, isWritable: true }, // metadata_account
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
@@ -237,22 +248,34 @@ export function findCookPDA(concatenatedData, salt) {
   return { pda, bump, sha256Hash };
 }
 
-export async function cookRecipe(feePayerPubkey, cookedData, tokenAccounts) {
+export async function useRecipe(
+  feePayerPubkey,
+  cookedData,
+  tokenAccounts,
+  option
+) {
+  if (![0x02, 0x03].includes(option)) {
+    throw new Error("❌ Invalid option. Must be 0x02 (cook) or 0x03 (uncook).");
+  }
+
   console.log("Calling cookRecipe");
 
   // Validate and destructure fields directly
   const { pda, seeds, seedSalt } = validateCookedDataForCooking(cookedData);
 
-  //check to make sure there are twice as many tokenAccounts then seeds
-  if (tokenAccounts.length !== 2 * seeds.length) {
+  // Check to make sure there are twice as many token accounts as seeds, plus 2 extra (index ATAs)
+  if (tokenAccounts.length !== 2 * seeds.length + 2) {
+    console.log("❌ Not enough token accounts.");
     console.log(
-      "NotEnough TokenAccounts,To fix pass all PDA accounts and User TokenAccounts for each mint"
+      "👉 To fix: pass all PDA token accounts and user token accounts for each mint."
     );
+    console.log(`ℹ️ Received tokenAccounts.length: ${tokenAccounts.length}`);
+    console.log(`ℹ️ Expected: ${2 * seeds.length + 2}`);
     return null;
   }
 
   let instructionData = Buffer.alloc(1);
-  instructionData.writeUInt8(0x02, 0);
+  instructionData.writeUInt8(option, 0); // 0x01 = cook, 0x02 = uncook
 
   const pdaPubkey = new PublicKey(pda);
   const metadataPda = PublicKey.findProgramAddressSync(
@@ -266,13 +289,12 @@ export async function cookRecipe(feePayerPubkey, cookedData, tokenAccounts) {
 
   let accounts = [
     { pubkey: feePayerPubkey, isSigner: true, isWritable: true }, // payer_account
-    { pubkey: FEE_ACCOUNT_PUBKEY, isSigner: false, isWritable: false }, // fee_account
+    { pubkey: FEE_ACCOUNT_PUBKEY, isSigner: false, isWritable: true }, // fee_account
+    { pubkey: CONFIG_ACCOUNT, isSigner: false, isWritable: false }, // config_account
     { pubkey: pdaPubkey, isSigner: false, isWritable: true }, // pda_account
-    { pubkey: metadataPda[0], isSigner: false, isWritable: true }, // metadata_account
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false }, // token_program
     { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false }, // rent_sysvar
-    { pubkey: METADATA_PROGRAM_ID, isSigner: false, isWritable: false }, // metadata_program
   ];
 
   for (const seed of seeds) {
@@ -298,6 +320,13 @@ export async function cookRecipe(feePayerPubkey, cookedData, tokenAccounts) {
   saltBytes.copy(saltBuffer, 0, 0, Math.min(saltBytes.length, 32));
 
   instructionData = Buffer.concat([instructionData, saltBuffer]);
+
+  // Assuming cookedData.qty_requested is like "2.5" from the UI
+  const baseQty = toBaseUnits(cookedData.qty_requested, 6); // 2.5 -> 2500000n
+  const qtyRequestedBuf = encodeU64(baseQty);
+
+  // Final instruction buffer
+  instructionData = Buffer.concat([instructionData, qtyRequestedBuf]);
 
   for (const tokenAccount of tokenAccounts) {
     accounts.push({
