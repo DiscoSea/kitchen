@@ -45,18 +45,16 @@ function validateCookedData(cookedData) {
     throw new Error("Invalid cookedData: Input must be an object.");
   }
 
-  const requiredFields = [
-    "pda",
-    "seeds",
-    "salt",
-    "metadataCid",
-    "name",
-    "symbol",
-  ];
+  const requiredFields = ["pda", "seeds", "metadataCid", "name", "symbol"];
   for (const field of requiredFields) {
     if (!cookedData[field]) {
       throw new Error(`Invalid cookedData: Missing required field '${field}'.`);
     }
+  }
+
+  //allow seedSalt=""
+  if (!("salt" in cookedData)) {
+    throw new Error("Invalid cookedData: Missing required field 'salt'.");
   }
 
   if (!Array.isArray(cookedData.seeds)) {
@@ -78,11 +76,16 @@ function validateCookedDataForCooking(cookedData) {
     throw new Error("Invalid cookedData: Input must be an object.");
   }
 
-  const requiredFields = ["pda", "seeds", "seedSalt"];
+  const requiredFields = ["pda", "seeds"];
   for (const field of requiredFields) {
     if (!cookedData[field]) {
       throw new Error(`Invalid cookedData: Missing required field '${field}'.`);
     }
+  }
+
+  //allow seedSalt=""
+  if (!("seedSalt" in cookedData)) {
+    throw new Error("Invalid cookedData: Missing required field 'seedSalt'.");
   }
 
   if (!Array.isArray(cookedData.seeds)) {
