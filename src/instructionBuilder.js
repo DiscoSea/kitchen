@@ -273,6 +273,46 @@ export async function createRecipe(feePayerPubkey, cookedData) {
   });
 }
 
+/**
+ * Sorts cookedData.seeds by mint address to match on-chain PDA derivation order.
+ * Returns a new cookedData object with sorted seeds.
+ *
+ * @param {Object} cookedData - The cooked recipe data with seeds array.
+ * @returns {Object} New cookedData object with seeds sorted by mint address.
+ */
+export function sortSeeds(cookedData) {
+  if (!cookedData || typeof cookedData !== "object") {
+    throw new Error("Invalid cookedData: Input must be an object.");
+  }
+
+  if (!Array.isArray(cookedData.seeds)) {
+    throw new Error("Invalid cookedData: 'seeds' must be an array.");
+  }
+
+  if (!cookedData.seeds.every((s) => s.mint && s.amount_u64 !== undefined)) {
+    throw new Error(
+      "Invalid cookedData: Each seed must have 'mint' and 'amount_u64'."
+    );
+  }
+
+  // Create a new cookedData object to avoid mutating the input
+  const sortedCookedData = { ...cookedData };
+  sortedCookedData.seeds = [...cookedData.seeds].sort((a, b) =>
+    new PublicKey(a.mint).toBuffer().compare(new PublicKey(b.mint).toBuffer())
+  );
+
+  console.log(
+    "Original seeds:",
+    cookedData.seeds.map((s) => s.mint)
+  );
+  console.log(
+    "Sorted seeds:",
+    sortedCookedData.seeds.map((s) => s.mint)
+  );
+
+  return sortedCookedData;
+}
+
 function validateCookedDataForCooking(cookedData) {
   if (!cookedData || typeof cookedData !== "object") {
     throw new Error("Invalid cookedData: Input must be an object.");
