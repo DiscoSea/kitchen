@@ -166,6 +166,8 @@ export function derivePDAFromCookedData(cookedData) {
     PROGRAM_ID
   );
 
+  console.log("Generated PDA:" + pda.toBase58());
+
   return { pda, bump, sha256Hash };
 }
 
@@ -298,6 +300,8 @@ function validateCookedDataForCooking(cookedData) {
     );
   }
 
+  console.log("cooked Data is Valid");
+
   // Return the destructured valid fields
   return cookedData;
 }
@@ -341,14 +345,6 @@ export async function useRecipe(
   instructionData.writeUInt8(option, 0); // 0x01 = cook, 0x02 = uncook
 
   const pdaPubkey = new PublicKey(pda);
-  const metadataPda = PublicKey.findProgramAddressSync(
-    [
-      Buffer.from("metadata"),
-      METADATA_PROGRAM_ID.toBuffer(),
-      pdaPubkey.toBuffer(),
-    ],
-    METADATA_PROGRAM_ID
-  );
 
   let accounts = [
     { pubkey: feePayerPubkey, isSigner: true, isWritable: true }, // payer_account
