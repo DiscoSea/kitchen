@@ -45,6 +45,8 @@ function validateCookedData(cookedData) {
     throw new Error("Invalid cookedData: Input must be an object.");
   }
 
+  console.log("@discosea/kitchen:validateCookedData", cookedData);
+
   const requiredFields = ["pda", "seeds", "metadataCid", "name", "symbol"];
   for (const field of requiredFields) {
     if (!cookedData[field]) {
@@ -73,44 +75,42 @@ function validateCookedData(cookedData) {
   return cookedData;
 }
 
-function validateCookedDataForCooking(cookedData) {
-  if (!cookedData || typeof cookedData !== "object") {
-    throw new Error("Invalid cookedData: Input must be an object.");
-  }
+/**
+ * Finds the Cook PDA (Program Derived Address) based on concatenated data and a salt.
+ *
+ * @param {Buffer | Uint8Array} concatenatedData - The input data to derive the PDA.
+ * @param {string} salt - A unique salt used for PDA derivation.
+ * @returns {{ pda: PublicKey, bump: number, sha256Hash: Uint8Array }}
+ * An object containing the derived PDA, bump seed, and SHA-256 hash.
+ */
+export function findCookPDA(concatenatedData, salt) {
+  // Convert salt to a fixed 32-byte Uint8Array with padding
+  const saltBytes = new Uint8Array(32);
+  const encodedSalt = new TextEncoder().encode(salt);
+  saltBytes.set(encodedSalt.subarray(0, Math.min(encodedSalt.length, 32)));
 
-  const requiredFields = ["pda", "seeds"];
-  for (const field of requiredFields) {
-    if (!cookedData[field]) {
-      throw new Error(`Invalid cookedData: Missing required field '${field}'.`);
-    }
-  }
+  // Concatenate the single Uint8Array with saltBytes
+  const totalLength = concatenatedData.length + 32;
+  const concatenated = new Uint8Array(totalLength);
+  concatenated.set(concatenatedData, 0);
+  concatenated.set(saltBytes, concatenatedData.length);
 
-  //allow seedSalt=""
-  if (!("seedSalt" in cookedData)) {
-    throw new Error("Invalid cookedData: Missing required field 'seedSalt'.");
-  }
+  // Compute SHA-256 hash
+  const sha256Hash = new Uint8Array(
+    createHash("sha256").update(concatenated).digest()
+  );
 
-  if (!Array.isArray(cookedData.seeds)) {
-    throw new Error("Invalid cookedData: 'seeds' must be an array.");
-  }
+  // Derive PDA
+  const [pda, bump] = PublicKey.findProgramAddressSync(
+    [sha256Hash],
+    PROGRAM_ID
+  );
 
-  if (!cookedData.seeds.every((s) => s.mint && s.amount_u64 !== undefined)) {
-    throw new Error(
-      "Invalid cookedData: Each seed must have 'mint' and 'amount_u64'."
-    );
-  }
+  console.log(`SHA256 Hash: ${Buffer.from(sha256Hash).toString("hex")}`);
+  console.log(`Derived PDA: ${pda.toBase58()}`);
+  console.log(`Bump Seed: ${bump}`);
 
-  // Return the destructured valid fields
-  return cookedData;
-}
-
-//convert ui qty to u64
-function toBaseUnits(amountStr, decimals) {
-  const floatVal = parseFloat(amountStr);
-  if (isNaN(floatVal)) throw new Error("Invalid number in qty_requested");
-
-  const scaled = Math.floor(floatVal * 10 ** decimals); // avoid rounding issues
-  return BigInt(scaled);
+  return { pda, bump, sha256Hash };
 }
 
 /**
@@ -215,42 +215,44 @@ export async function createRecipe(feePayerPubkey, cookedData) {
   });
 }
 
-/**
- * Finds the Cook PDA (Program Derived Address) based on concatenated data and a salt.
- *
- * @param {Buffer | Uint8Array} concatenatedData - The input data to derive the PDA.
- * @param {string} salt - A unique salt used for PDA derivation.
- * @returns {{ pda: PublicKey, bump: number, sha256Hash: Uint8Array }}
- * An object containing the derived PDA, bump seed, and SHA-256 hash.
- */
-export function findCookPDA(concatenatedData, salt) {
-  // Convert salt to a fixed 32-byte Uint8Array with padding
-  const saltBytes = new Uint8Array(32);
-  const encodedSalt = new TextEncoder().encode(salt);
-  saltBytes.set(encodedSalt.subarray(0, Math.min(encodedSalt.length, 32)));
+function validateCookedDataForCooking(cookedData) {
+  if (!cookedData || typeof cookedData !== "object") {
+    throw new Error("Invalid cookedData: Input must be an object.");
+  }
 
-  // Concatenate the single Uint8Array with saltBytes
-  const totalLength = concatenatedData.length + 32;
-  const concatenated = new Uint8Array(totalLength);
-  concatenated.set(concatenatedData, 0);
-  concatenated.set(saltBytes, concatenatedData.length);
+  const requiredFields = ["pda", "seeds"];
+  for (const field of requiredFields) {
+    if (!cookedData[field]) {
+      throw new Error(`Invalid cookedData: Missing required field '${field}'.`);
+    }
+  }
 
-  // Compute SHA-256 hash
-  const sha256Hash = new Uint8Array(
-    createHash("sha256").update(concatenated).digest()
-  );
+  //allow seedSalt=""
+  if (!("seedSalt" in cookedData)) {
+    throw new Error("Invalid cookedData: Missing required field 'seedSalt'.");
+  }
 
-  // Derive PDA
-  const [pda, bump] = PublicKey.findProgramAddressSync(
-    [sha256Hash],
-    PROGRAM_ID
-  );
+  if (!Array.isArray(cookedData.seeds)) {
+    throw new Error("Invalid cookedData: 'seeds' must be an array.");
+  }
 
-  console.log(`SHA256 Hash: ${Buffer.from(sha256Hash).toString("hex")}`);
-  console.log(`Derived PDA: ${pda.toBase58()}`);
-  console.log(`Bump Seed: ${bump}`);
+  if (!cookedData.seeds.every((s) => s.mint && s.amount_u64 !== undefined)) {
+    throw new Error(
+      "Invalid cookedData: Each seed must have 'mint' and 'amount_u64'."
+    );
+  }
 
-  return { pda, bump, sha256Hash };
+  // Return the destructured valid fields
+  return cookedData;
+}
+
+//convert ui qty to u64
+function toBaseUnits(amountStr, decimals) {
+  const floatVal = parseFloat(amountStr);
+  if (isNaN(floatVal)) throw new Error("Invalid number in qty_requested");
+
+  const scaled = Math.floor(floatVal * 10 ** decimals); // avoid rounding issues
+  return BigInt(scaled);
 }
 
 export async function useRecipe(
