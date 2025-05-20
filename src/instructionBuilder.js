@@ -40,17 +40,20 @@ function encodeString(str) {
   return Buffer.concat([lenBuffer, strBuffer]);
 }
 
-function validateCookedData(cookedData) {
+/**
+ * Validates cookedData and enriches it with the derived PDA.
+ *
+ * @param {object} cookedData
+ * @returns {object} enriched cookedData with .pda set
+ */
+export function validateCookedData(cookedData) {
   if (!cookedData || typeof cookedData !== "object") {
     throw new Error("Invalid cookedData: Input must be an object.");
   }
 
   console.log("debuglog from @discosea/kitchen:validateCookedData", cookedData);
 
-  const { pda } = derivePDAFromCookedData(cookedData);
-  cookedData.pda = pda.toBase58(); // ensure pda is a string
-
-  const requiredFields = ["pda", "seeds", "metadataCid", "name", "symbol"];
+  const requiredFields = ["seeds", "metadataCid", "name", "symbol"];
   for (const field of requiredFields) {
     if (!cookedData[field]) {
       throw new Error(`Invalid cookedData: Missing required field '${field}'.`);
@@ -71,7 +74,13 @@ function validateCookedData(cookedData) {
     );
   }
 
-  cookedData.seeds.sort((a, b) => a.mint.localeCompare(b.mint));
+  // Sort seeds for consistency before PDA derivation
+  cookedData.seeds.sort((a, b) =>
+    new PublicKey(a.mint).toBuffer().compare(new PublicKey(b.mint).toBuffer())
+  );
+
+  const { pda } = derivePDAFromCookedData(cookedData);
+  cookedData.pda = pda.toBase58();
 
   return cookedData;
 }
@@ -115,9 +124,10 @@ export function findCookPDA(concatenatedData, salt) {
 }
 
 /**
- * Derives the PDA from cookedData.seeds and cookedData.salt
+ * Derives PDA from cookedData's seeds and salt.
+ * Always sorts seeds internally to match on-chain hash behavior.
  *
- * @param {Object} cookedData - Must include `seeds` array and `salt` string
+ * @param {Object} cookedData - Must include { seeds, salt }
  * @returns {{ pda: PublicKey, bump: number, sha256Hash: Buffer }}
  */
 export function derivePDAFromCookedData(cookedData) {
@@ -128,28 +138,27 @@ export function derivePDAFromCookedData(cookedData) {
     throw new Error("cookedData.salt must be a string");
   }
 
-  // Sort seeds by ascending mint public key
+  // Sort for safety
   const sortedSeeds = [...cookedData.seeds].sort((a, b) =>
     new PublicKey(a.mint).toBuffer().compare(new PublicKey(b.mint).toBuffer())
   );
 
-  const seedBytes = [];
+  const seedChunks = [];
+
   for (const seed of sortedSeeds) {
     const mintBytes = new PublicKey(seed.mint).toBuffer();
 
     const qtyBytes = Buffer.alloc(8);
     qtyBytes.writeBigUInt64LE(BigInt(seed.amount_u64));
 
-    seedBytes.push(mintBytes, qtyBytes);
+    seedChunks.push(mintBytes, qtyBytes);
   }
 
-  // Handle salt as 32-byte fixed buffer
   const saltBytes = Buffer.alloc(32);
   const saltUtf8 = Buffer.from(cookedData.salt, "utf8");
   saltUtf8.copy(saltBytes, 0, 0, Math.min(32, saltUtf8.length));
 
-  const concatenated = Buffer.concat([...seedBytes, saltBytes]);
-
+  const concatenated = Buffer.concat([...seedChunks, saltBytes]);
   const sha256Hash = createHash("sha256").update(concatenated).digest();
 
   const [pda, bump] = PublicKey.findProgramAddressSync(
