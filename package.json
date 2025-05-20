@@ -1,6 +1,6 @@
 {
   "name": "@discosea/kitchen",
-  "version": "1.0.29",
+  "version": "1.0.30",
   "description": "This package builds Solana Instructions to merge multiple SPL tokens into one.",
   "main": "src/index.js",
   "exports": {
