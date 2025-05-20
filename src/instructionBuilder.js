@@ -21,7 +21,7 @@ import {
   IPFS_GATEWAY,
 } from "./constants.js";
 
-// ─── Helpers ─────────────────────────────────────────────────────────
+// Manual Borsh serialization helpers
 function encodeU32(value) {
   const buf = Buffer.alloc(4);
   buf.writeUInt32LE(value, 0);
@@ -40,65 +40,18 @@ function encodeString(str) {
   return Buffer.concat([lenBuffer, strBuffer]);
 }
 
-function sortSeeds(seeds) {
-  return [...seeds].sort((a, b) =>
-    new PublicKey(a.mint).toBuffer().compare(new PublicKey(b.mint).toBuffer())
-  );
-}
-
-// ─── PDA Logic ──────────────────────────────────────────────────────
-export function derivePDAFromCookedData(cookedData) {
-  const sortedSeeds = sortSeeds(cookedData.seeds);
-
-  const seedChunks = sortedSeeds.flatMap((seed) => {
-    const mintBytes = new PublicKey(seed.mint).toBuffer();
-    const qtyBytes = encodeU64(seed.amount_u64);
-    return [mintBytes, qtyBytes];
-  });
-
-  const saltBytes = Buffer.alloc(32);
-  Buffer.from(cookedData.salt, "utf8").copy(saltBytes);
-
-  const concatenated = Buffer.concat([...seedChunks, saltBytes]);
-  const sha256Hash = createHash("sha256").update(concatenated).digest();
-  const [pda, bump] = PublicKey.findProgramAddressSync(
-    [sha256Hash],
-    PROGRAM_ID
-  );
-
-  console.log("Generated PDA:", pda.toBase58());
-  return { pda, bump, sha256Hash };
-}
-
-export function findCookPDA(concatenatedData, salt) {
-  const saltBytes = new Uint8Array(32);
-  const encodedSalt = new TextEncoder().encode(salt);
-  saltBytes.set(encodedSalt.subarray(0, 32));
-
-  const combined = new Uint8Array(concatenatedData.length + 32);
-  combined.set(concatenatedData);
-  combined.set(saltBytes, concatenatedData.length);
-
-  const sha256Hash = new Uint8Array(
-    createHash("sha256").update(combined).digest()
-  );
-  const [pda, bump] = PublicKey.findProgramAddressSync(
-    [sha256Hash],
-    PROGRAM_ID
-  );
-
-  console.log("SHA256 Hash:", Buffer.from(sha256Hash).toString("hex"));
-  console.log("Derived PDA:", pda.toBase58());
-  console.log("Bump Seed:", bump);
-
-  return { pda, bump, sha256Hash };
-}
-
-// ─── Validation ─────────────────────────────────────────────────────
+/**
+ * Validates cookedData and enriches it with the derived PDA.
+ *
+ * @param {object} cookedData
+ * @returns {object} enriched cookedData with .pda set
+ */
 export function validateCookedData(cookedData) {
   if (!cookedData || typeof cookedData !== "object") {
     throw new Error("Invalid cookedData: Input must be an object.");
   }
+
+  console.log("debuglog from @discosea/kitchen:validateCookedData", cookedData);
 
   const requiredFields = ["seeds", "metadataCid", "name", "symbol"];
   for (const field of requiredFields) {
@@ -106,67 +59,147 @@ export function validateCookedData(cookedData) {
       throw new Error(`Invalid cookedData: Missing required field '${field}'.`);
     }
   }
-  if (!("salt" in cookedData))
+
+  if (!("salt" in cookedData)) {
     throw new Error("Invalid cookedData: Missing required field 'salt'.");
-  if (!Array.isArray(cookedData.seeds))
+  }
+
+  if (!Array.isArray(cookedData.seeds)) {
     throw new Error("Invalid cookedData: 'seeds' must be an array.");
+  }
+
   if (!cookedData.seeds.every((s) => s.mint && s.amount_u64 !== undefined)) {
     throw new Error(
       "Invalid cookedData: Each seed must have 'mint' and 'amount_u64'."
     );
   }
 
-  cookedData.seeds = sortSeeds(cookedData.seeds);
-  cookedData.pda = derivePDAFromCookedData(cookedData).pda.toBase58();
+  // Sort seeds for consistency before PDA derivation
+  cookedData.seeds.sort((a, b) =>
+    new PublicKey(a.mint).toBuffer().compare(new PublicKey(b.mint).toBuffer())
+  );
+
+  const { pda } = derivePDAFromCookedData(cookedData);
+  cookedData.pda = pda.toBase58();
 
   return cookedData;
 }
 
-function validateCookedDataForCooking(cookedData) {
-  if (!cookedData || typeof cookedData !== "object") {
-    throw new Error("Invalid cookedData: Input must be an object.");
-  }
-  const requiredFields = ["pda", "seeds"];
-  for (const field of requiredFields) {
-    if (!cookedData[field]) {
-      throw new Error(`Invalid cookedData: Missing required field '${field}'.`);
-    }
-  }
-  if (!("seedSalt" in cookedData))
-    throw new Error("Invalid cookedData: Missing required field 'seedSalt'.");
-  if (!Array.isArray(cookedData.seeds))
-    throw new Error("Invalid cookedData: 'seeds' must be an array.");
-  if (!cookedData.seeds.every((s) => s.mint && s.amount_u64 !== undefined)) {
-    throw new Error(
-      "Invalid cookedData: Each seed must have 'mint' and 'amount_u64'."
-    );
-  }
+/**
+ * Finds the Cook PDA (Program Derived Address) based on concatenated data and a salt.
+ *
+ * @param {Buffer | Uint8Array} concatenatedData - The input data to derive the PDA.
+ * @param {string} salt - A unique salt used for PDA derivation.
+ * @returns {{ pda: PublicKey, bump: number, sha256Hash: Uint8Array }}
+ * An object containing the derived PDA, bump seed, and SHA-256 hash.
+ */
+export function findCookPDA(concatenatedData, salt) {
+  // Convert salt to a fixed 32-byte Uint8Array with padding
+  const saltBytes = new Uint8Array(32);
+  const encodedSalt = new TextEncoder().encode(salt);
+  saltBytes.set(encodedSalt.subarray(0, Math.min(encodedSalt.length, 32)));
 
-  console.log("cooked Data is Valid");
-  cookedData.seeds = sortSeeds(cookedData.seeds);
-  cookedData.pda = derivePDAFromCookedData(cookedData).pda.toBase58();
-  return cookedData;
+  // Concatenate the single Uint8Array with saltBytes
+  const totalLength = concatenatedData.length + 32;
+  const concatenated = new Uint8Array(totalLength);
+  concatenated.set(concatenatedData, 0);
+  concatenated.set(saltBytes, concatenatedData.length);
+
+  // Compute SHA-256 hash
+  const sha256Hash = new Uint8Array(
+    createHash("sha256").update(concatenated).digest()
+  );
+
+  // Derive PDA
+  const [pda, bump] = PublicKey.findProgramAddressSync(
+    [sha256Hash],
+    PROGRAM_ID
+  );
+
+  console.log(`SHA256 Hash: ${Buffer.from(sha256Hash).toString("hex")}`);
+  console.log(`Derived PDA: ${pda.toBase58()}`);
+  console.log(`Bump Seed: ${bump}`);
+
+  return { pda, bump, sha256Hash };
 }
 
-// ─── Instructions ───────────────────────────────────────────────────
+/**
+ * Derives PDA from cookedData's seeds and salt.
+ * Always sorts seeds internally to match on-chain hash behavior.
+ *
+ * @param {Object} cookedData - Must include { seeds, salt }
+ * @returns {{ pda: PublicKey, bump: number, sha256Hash: Buffer }}
+ */
+export function derivePDAFromCookedData(cookedData) {
+  if (!Array.isArray(cookedData.seeds)) {
+    throw new Error("cookedData.seeds must be an array");
+  }
+  if (typeof cookedData.salt !== "string") {
+    throw new Error("cookedData.salt must be a string");
+  }
+
+  // Sort for safety
+  const sortedSeeds = [...cookedData.seeds].sort((a, b) =>
+    new PublicKey(a.mint).toBuffer().compare(new PublicKey(b.mint).toBuffer())
+  );
+
+  const seedChunks = [];
+
+  for (const seed of sortedSeeds) {
+    const mintBytes = new PublicKey(seed.mint).toBuffer();
+
+    const qtyBytes = Buffer.alloc(8);
+    qtyBytes.writeBigUInt64LE(BigInt(seed.amount_u64));
+
+    seedChunks.push(mintBytes, qtyBytes);
+  }
+
+  const saltBytes = Buffer.alloc(32);
+  const saltUtf8 = Buffer.from(cookedData.salt, "utf8");
+  saltUtf8.copy(saltBytes, 0, 0, Math.min(32, saltUtf8.length));
+
+  const concatenated = Buffer.concat([...seedChunks, saltBytes]);
+  const sha256Hash = createHash("sha256").update(concatenated).digest();
+
+  const [pda, bump] = PublicKey.findProgramAddressSync(
+    [sha256Hash],
+    PROGRAM_ID
+  );
+
+  console.log("Generated PDA:" + pda.toBase58());
+
+  return { pda, bump, sha256Hash };
+}
+
+/**
+ * Creates a transaction instruction for the "createRecipe" process, constructing
+ * a PDA (Program Derived Address) and associated metadata for an on-chain recipe.
+ *
+ * @param {PublicKey} feePayerPubkey - The public key of the fee payer executing the transaction.
+ * @param {Object} cookedData - The cooked recipe data containing necessary fields for creation.
+ * @param {string} cookedData.pda - The derived PDA for the recipe.
+ * @param {Array<Object>} cookedData.seeds - An array of seeds required for PDA derivation.
+ * @param {string} cookedData.salt - A unique salt value to ensure uniqueness.
+ * @param {string} cookedData.metadataCid - The IPFS CID storing metadata.
+ * @param {string} cookedData.name - The name of the recipe.
+ * @param {string} cookedData.symbol - The symbol associated with the recipe.
+ *
+ * @returns {Promise<TransactionInstruction>} A promise resolving to a Solana `TransactionInstruction`
+ * that can be included in a transaction for execution on-chain.
+ */
 export async function createRecipe(feePayerPubkey, cookedData) {
   console.log("Calling createRecipe");
+
+  // Validate and destructure fields directly
   const { pda, seeds, salt, metadataCid, name, symbol } =
     validateCookedData(cookedData);
   const uri = `${IPFS_GATEWAY}${metadataCid}`;
 
-  const instructionData = Buffer.concat([
-    Buffer.from([0x01]),
-    encodeU32(seeds.length),
-    Buffer.concat(seeds.map((s) => encodeU64(s.amount_u64))),
-    Buffer.concat([Buffer.alloc(32, 0), Buffer.from(salt).slice(0, 32)]),
-    encodeString(name),
-    encodeString(symbol),
-    encodeString(uri),
-  ]);
+  let instructionData = Buffer.alloc(1);
+  instructionData.writeUInt8(0x01, 0);
 
   const pdaPubkey = new PublicKey(pda);
-  const [metadataPda] = await PublicKey.findProgramAddress(
+  const metadataPda = await PublicKey.findProgramAddress(
     [
       Buffer.from("metadata"),
       METADATA_PROGRAM_ID.toBuffer(),
@@ -175,34 +208,111 @@ export async function createRecipe(feePayerPubkey, cookedData) {
     METADATA_PROGRAM_ID
   );
 
-  const keys = [
-    { pubkey: feePayerPubkey, isSigner: true, isWritable: true },
-    { pubkey: FEE_ACCOUNT_PUBKEY, isSigner: false, isWritable: true },
-    { pubkey: CONFIG_ACCOUNT, isSigner: false, isWritable: false },
-    { pubkey: pdaPubkey, isSigner: false, isWritable: true },
-    { pubkey: metadataPda, isSigner: false, isWritable: true },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
-    { pubkey: METADATA_PROGRAM_ID, isSigner: false, isWritable: false },
-    ...seeds.map((s) => ({
-      pubkey: new PublicKey(s.mint),
-      isSigner: false,
-      isWritable: false,
-    })),
+  let accounts = [
+    { pubkey: feePayerPubkey, isSigner: true, isWritable: true }, // payer_account
+    { pubkey: FEE_ACCOUNT_PUBKEY, isSigner: false, isWritable: true }, // fee_account
+    { pubkey: CONFIG_ACCOUNT, isSigner: false, isWritable: false }, // config_account
+    { pubkey: pdaPubkey, isSigner: false, isWritable: true }, // pda_account
+    { pubkey: metadataPda[0], isSigner: false, isWritable: true }, // metadata_account
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false }, // token_program
+    { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false }, // rent_sysvar
+    { pubkey: METADATA_PROGRAM_ID, isSigner: false, isWritable: false }, // metadata_program
   ];
 
+  for (const seed of seeds) {
+    if (seed.mint) {
+      accounts.push({
+        pubkey: new PublicKey(seed.mint),
+        isSigner: false,
+        isWritable: false,
+      });
+    }
+  }
+
+  // Handling amounts
+  const amounts = seeds.map((s) => BigInt(s.amount_u64));
+  const amountsLen = encodeU32(amounts.length);
+  const amountsData = Buffer.concat(amounts.map(encodeU64));
+
+  instructionData = Buffer.concat([instructionData, amountsLen, amountsData]);
+
+  // Handling salt
+  let saltBuffer = Buffer.alloc(32);
+  const saltBytes = Buffer.from(salt, "utf-8");
+  saltBytes.copy(saltBuffer, 0, 0, Math.min(saltBytes.length, 32));
+
+  instructionData = Buffer.concat([instructionData, saltBuffer]);
+
+  // Handling encoded strings
+  const nameData = encodeString(name);
+  const symbolData = encodeString(symbol);
+  const uriData = encodeString(uri);
+
+  instructionData = Buffer.concat([
+    instructionData,
+    nameData,
+    symbolData,
+    uriData,
+  ]);
+
+  console.log("Instruction Data Breakdown:");
+  console.log("  Instruction ID:", instructionData.slice(0, 1).toString("hex"));
+  console.log("  Amounts Length:", amountsLen.toString("hex"));
+  console.log("  Amounts Data:", amountsData.toString("hex"));
+  console.log("  Salt:", saltBuffer.toString("hex"));
+  console.log("  Name:", nameData.toString("hex"));
+  console.log("  Symbol:", symbolData.toString("hex"));
+  console.log("  URI:", uriData.toString("hex"));
+  console.log("Final instruction data (hex):", instructionData.toString("hex"));
+
   return new TransactionInstruction({
-    keys,
+    keys: accounts,
     programId: PROGRAM_ID,
     data: instructionData,
   });
 }
 
+function validateCookedDataForCooking(cookedData) {
+  if (!cookedData || typeof cookedData !== "object") {
+    throw new Error("Invalid cookedData: Input must be an object.");
+  }
+
+  const requiredFields = ["pda", "seeds"];
+  for (const field of requiredFields) {
+    if (!cookedData[field]) {
+      throw new Error(`Invalid cookedData: Missing required field '${field}'.`);
+    }
+  }
+
+  //allow seedSalt=""
+  if (!("seedSalt" in cookedData)) {
+    throw new Error("Invalid cookedData: Missing required field 'seedSalt'.");
+  }
+
+  if (!Array.isArray(cookedData.seeds)) {
+    throw new Error("Invalid cookedData: 'seeds' must be an array.");
+  }
+
+  if (!cookedData.seeds.every((s) => s.mint && s.amount_u64 !== undefined)) {
+    throw new Error(
+      "Invalid cookedData: Each seed must have 'mint' and 'amount_u64'."
+    );
+  }
+
+  console.log("cooked Data is Valid");
+
+  // Return the destructured valid fields
+  return cookedData;
+}
+
+//convert ui qty to u64
 function toBaseUnits(amountStr, decimals) {
   const floatVal = parseFloat(amountStr);
   if (isNaN(floatVal)) throw new Error("Invalid number in qty_requested");
-  return BigInt(Math.floor(floatVal * 10 ** decimals));
+
+  const scaled = Math.floor(floatVal * 10 ** decimals); // avoid rounding issues
+  return BigInt(scaled);
 }
 
 export async function useRecipe(
@@ -211,50 +321,82 @@ export async function useRecipe(
   tokenAccounts,
   option
 ) {
-  if (![0x02, 0x03].includes(option))
+  if (![0x02, 0x03].includes(option)) {
     throw new Error("❌ Invalid option. Must be 0x02 (cook) or 0x03 (uncook).");
+  }
+
   console.log("Calling cookRecipe");
 
+  // Validate and destructure fields directly
   const { pda, seeds, seedSalt } = validateCookedDataForCooking(cookedData);
+
+  // Check to make sure there are twice as many token accounts as seeds, plus 2 extra (index ATAs)
   if (tokenAccounts.length !== 2 * seeds.length + 2) {
     console.log("❌ Not enough token accounts.");
     console.log(
       "👉 To fix: pass all PDA token accounts and user token accounts for each mint."
     );
+    console.log(`ℹ️ Received tokenAccounts.length: ${tokenAccounts.length}`);
+    console.log(`ℹ️ Expected: ${2 * seeds.length + 2}`);
     return null;
   }
 
-  const pdaPubkey = new PublicKey(pda);
-  const instructionData = Buffer.concat([
-    Buffer.from([option]),
-    encodeU32(seeds.length),
-    Buffer.concat(seeds.map((s) => encodeU64(s.amount_u64))),
-    Buffer.concat([Buffer.alloc(32, 0), Buffer.from(seedSalt).slice(0, 32)]),
-    encodeU64(toBaseUnits(cookedData.qty_requested, 6)),
-  ]);
+  let instructionData = Buffer.alloc(1);
+  instructionData.writeUInt8(option, 0); // 0x01 = cook, 0x02 = uncook
 
-  const keys = [
-    { pubkey: feePayerPubkey, isSigner: true, isWritable: true },
-    { pubkey: FEE_ACCOUNT_PUBKEY, isSigner: false, isWritable: true },
-    { pubkey: CONFIG_ACCOUNT, isSigner: false, isWritable: false },
-    { pubkey: pdaPubkey, isSigner: false, isWritable: true },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
-    ...seeds.map((s) => ({
-      pubkey: new PublicKey(s.mint),
-      isSigner: false,
-      isWritable: false,
-    })),
-    ...tokenAccounts.map((ta) => ({
-      pubkey: new PublicKey(ta),
-      isSigner: false,
-      isWritable: true,
-    })),
+  const pdaPubkey = new PublicKey(pda);
+
+  let accounts = [
+    { pubkey: feePayerPubkey, isSigner: true, isWritable: true }, // payer_account
+    { pubkey: FEE_ACCOUNT_PUBKEY, isSigner: false, isWritable: true }, // fee_account
+    { pubkey: CONFIG_ACCOUNT, isSigner: false, isWritable: false }, // config_account
+    { pubkey: pdaPubkey, isSigner: false, isWritable: true }, // pda_account
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false }, // token_program
+    { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false }, // rent_sysvar
   ];
 
+  for (const seed of seeds) {
+    if (seed.mint) {
+      accounts.push({
+        pubkey: new PublicKey(seed.mint),
+        isSigner: false,
+        isWritable: false,
+      });
+    }
+  }
+
+  // Handling amounts
+  const amounts = seeds.map((s) => BigInt(s.amount_u64));
+  const amountsLen = encodeU32(amounts.length);
+  const amountsData = Buffer.concat(amounts.map(encodeU64));
+
+  instructionData = Buffer.concat([instructionData, amountsLen, amountsData]);
+
+  // Handling salt
+  let saltBuffer = Buffer.alloc(32);
+  const saltBytes = Buffer.from(seedSalt, "utf-8");
+  saltBytes.copy(saltBuffer, 0, 0, Math.min(saltBytes.length, 32));
+
+  instructionData = Buffer.concat([instructionData, saltBuffer]);
+
+  // Assuming cookedData.qty_requested is like "2.5" from the UI
+  const baseQty = toBaseUnits(cookedData.qty_requested, 6); // 2.5 -> 2500000n
+  const qtyRequestedBuf = encodeU64(baseQty);
+
+  // Final instruction buffer
+  instructionData = Buffer.concat([instructionData, qtyRequestedBuf]);
+
+  for (const tokenAccount of tokenAccounts) {
+    accounts.push({
+      pubkey: new PublicKey(tokenAccount),
+      isSigner: false,
+      isWritable: true,
+    });
+  }
+
   return new TransactionInstruction({
-    keys,
+    keys: accounts,
     programId: PROGRAM_ID,
     data: instructionData,
   });
