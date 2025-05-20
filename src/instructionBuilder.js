@@ -45,7 +45,10 @@ function validateCookedData(cookedData) {
     throw new Error("Invalid cookedData: Input must be an object.");
   }
 
-  console.log("@discosea/kitchen:validateCookedData", cookedData);
+  console.log("debuglog from @discosea/kitchen:validateCookedData", cookedData);
+
+  const { pda } = derivePDAFromCookedData(cookedData);
+  cookedData.pda = pda.toBase58(); // ensure pda is a string
 
   const requiredFields = ["pda", "seeds", "metadataCid", "name", "symbol"];
   for (const field of requiredFields) {
@@ -54,7 +57,6 @@ function validateCookedData(cookedData) {
     }
   }
 
-  // Allow seedSalt to be an empty string
   if (!("salt" in cookedData)) {
     throw new Error("Invalid cookedData: Missing required field 'salt'.");
   }
@@ -69,7 +71,6 @@ function validateCookedData(cookedData) {
     );
   }
 
-  // Sort seeds by ascending mint address
   cookedData.seeds.sort((a, b) => a.mint.localeCompare(b.mint));
 
   return cookedData;
@@ -109,6 +110,52 @@ export function findCookPDA(concatenatedData, salt) {
   console.log(`SHA256 Hash: ${Buffer.from(sha256Hash).toString("hex")}`);
   console.log(`Derived PDA: ${pda.toBase58()}`);
   console.log(`Bump Seed: ${bump}`);
+
+  return { pda, bump, sha256Hash };
+}
+
+/**
+ * Derives the PDA from cookedData.seeds and cookedData.salt
+ *
+ * @param {Object} cookedData - Must include `seeds` array and `salt` string
+ * @returns {{ pda: PublicKey, bump: number, sha256Hash: Buffer }}
+ */
+export function derivePDAFromCookedData(cookedData) {
+  if (!Array.isArray(cookedData.seeds)) {
+    throw new Error("cookedData.seeds must be an array");
+  }
+  if (typeof cookedData.salt !== "string") {
+    throw new Error("cookedData.salt must be a string");
+  }
+
+  // Sort seeds by ascending mint public key
+  const sortedSeeds = [...cookedData.seeds].sort((a, b) =>
+    new PublicKey(a.mint).toBuffer().compare(new PublicKey(b.mint).toBuffer())
+  );
+
+  const seedBytes = [];
+  for (const seed of sortedSeeds) {
+    const mintBytes = new PublicKey(seed.mint).toBuffer();
+
+    const qtyBytes = Buffer.alloc(8);
+    qtyBytes.writeBigUInt64LE(BigInt(seed.amount_u64));
+
+    seedBytes.push(mintBytes, qtyBytes);
+  }
+
+  // Handle salt as 32-byte fixed buffer
+  const saltBytes = Buffer.alloc(32);
+  const saltUtf8 = Buffer.from(cookedData.salt, "utf8");
+  saltUtf8.copy(saltBytes, 0, 0, Math.min(32, saltUtf8.length));
+
+  const concatenated = Buffer.concat([...seedBytes, saltBytes]);
+
+  const sha256Hash = createHash("sha256").update(concatenated).digest();
+
+  const [pda, bump] = PublicKey.findProgramAddressSync(
+    [sha256Hash],
+    PROGRAM_ID
+  );
 
   return { pda, bump, sha256Hash };
 }
