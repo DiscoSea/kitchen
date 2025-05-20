@@ -3,4 +3,9 @@
  * @description Entry point
  */
 
-export { findCookPDA, createRecipe, useRecipe } from "./instructionBuilder.js";
+export {
+  findCookPDA,
+  createRecipe,
+  useRecipe,
+  sortSeeds,
+} from "./instructionBuilder.js";
