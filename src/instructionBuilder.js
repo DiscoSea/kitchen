@@ -52,7 +52,7 @@ function validateCookedData(cookedData) {
     }
   }
 
-  //allow seedSalt=""
+  // Allow seedSalt to be an empty string
   if (!("salt" in cookedData)) {
     throw new Error("Invalid cookedData: Missing required field 'salt'.");
   }
@@ -67,7 +67,9 @@ function validateCookedData(cookedData) {
     );
   }
 
-  // Return the destructured valid fields
+  // Sort seeds by ascending mint address
+  cookedData.seeds.sort((a, b) => a.mint.localeCompare(b.mint));
+
   return cookedData;
 }
 
